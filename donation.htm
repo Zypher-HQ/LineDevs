@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LineDevs Console Logs - Donations</title>
+  <link rel="icon" href="/favicon.ico" type="image/png">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 flex items-center justify-center min-h-screen">
+  <main class="max-w-md w-full p-6 bg-slate-800 rounded shadow">
+    <div class="flex items-center justify-between mb-4">
+      <h1 class="text-lg font-semibold">Support LineDevs</h1>
+      <img src="/favicon.ico" alt="logo" class="w-8 h-8 rounded" />
+    </div>
+    <div id="content" class="text-center">
+      <p class="mb-4 text-slate-300">Checking your region...</p>
+      <div id="ph-area" class="hidden">
+        <p class="mb-2">🇵🇭 Donate via <strong>GCash</strong></p>
+        <p class="text-xl font-mono mb-2">+63 936 170 3679</p>
+        <button id="copyBtn" class="px-4 py-2 bg-blue-600 rounded mb-3">Copy Number</button>
+        <p class="mb-4 text-slate-300">Thanks for supporting LineDevs!</p>
+        <a href="/dashboard" class="inline-block px-4 py-2 bg-slate-700 rounded">Go back to Dashboard</a>
+      </div>
+      <div id="not-ph" class="hidden">
+        <p class="text-red-400 mb-3">Sorry — donations are currently only accepted from the Philippines (GCash).</p>
+        <a href="/dashboard" class="inline-block px-4 py-2 bg-slate-700 rounded">Go back to Dashboard</a>
+      </div>
+    </div>
+  </main>
+
+<script>
+async function checkRegion() {
+  try {
+    const res = await fetch('https://ipapi.co/json/');
+    const js = await res.json();
+    const country = js.country_code || js.country;
+    if (country === 'PH' || country === 'PHL') {
+      document.getElementById('ph-area').classList.remove('hidden');
+      document.getElementById('content').querySelector('p').classList.add('hidden');
+      document.getElementById('copyBtn').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText('09361703679');
+          alert('Number copied: 09361703679');
+        } catch(e) {
+          alert('Copy failed — please copy manually: 09361703679');
+        }
+      });
+    } else {
+      document.getElementById('not-ph').classList.remove('hidden');
+      document.getElementById('content').querySelector('p').classList.add('hidden');
+    }
+  } catch (e) {
+    document.getElementById('not-ph').classList.remove('hidden');
+    document.getElementById('content').querySelector('p').classList.add('hidden');
+  }
+}
+
+checkRegion();
+</script>
+</body>
+</html>

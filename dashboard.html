@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LineDevs Console Logs</title>
+  <link rel="icon" href="/favicon.ico" type="image/png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.min.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100">
+  <header class="p-4 flex items-center justify-between border-b border-slate-800">
+    <div class="flex items-center gap-3">
+      <img src="/favicon.ico" alt="LineDevs" class="w-10 h-10 rounded" />
+      <h1 class="text-xl font-semibold">LineDevs Console Logs</h1>
+    </div>
+    <div class="flex items-center gap-2">
+      <a href="/donation" class="px-3 py-2 bg-blue-600 rounded">Donate</a>
+      <a href="https://discord.gg/SpHQXmXxP" target="_blank" class="px-3 py-2 bg-slate-700 rounded">Join Discord</a>
+    </div>
+  </header>
+
+  <main class="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+    <section class="md:col-span-2">
+      <div class="grid grid-cols-2 gap-4 mb-4">
+        <div class="p-4 bg-slate-800 rounded">
+          <div class="text-xs text-slate-400">Status</div>
+          <div id="status" class="text-lg">Loading...</div>
+        </div>
+        <div class="p-4 bg-slate-800 rounded">
+          <div class="text-xs text-slate-400">Uptime (s)</div>
+          <div id="uptime" class="text-lg">0</div>
+        </div>
+        <div class="p-4 bg-slate-800 rounded">
+          <div class="text-xs text-slate-400">Memory (MB)</div>
+          <div id="memory" class="text-lg">0</div>
+        </div>
+        <div class="p-4 bg-slate-800 rounded">
+          <div class="text-xs text-slate-400">Active Users</div>
+          <div id="activeUsers" class="text-lg">0</div>
+        </div>
+      </div>
+
+      <div class="bg-black p-3 rounded h-[60vh] overflow-auto font-mono text-sm" id="console">
+      </div>
+    </section>
+
+    <aside class="p-4 bg-slate-800 rounded">
+      <h2 class="text-sm text-slate-300 mb-3">Quick Metrics</h2>
+      <div class="space-y-3">
+        <div class="p-3 bg-slate-700 rounded">
+          <div class="text-xs text-slate-400">Code Updates</div>
+          <div id="codeUpdates">0</div>
+        </div>
+        <div class="p-3 bg-slate-700 rounded">
+          <div class="text-xs text-slate-400">Lag Spikes</div>
+          <div id="lagSpikes">0</div>
+        </div>
+        <div class="p-3 bg-slate-700 rounded">
+          <div class="text-xs text-slate-400">Last Log</div>
+          <div id="lastLog">—</div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+<script>
+  const socket = io();
+  const consoleEl = document.getElementById('console');
+  function addLog(item) {
+    const el = document.createElement('div');
+    el.textContent = item.msg;
+    if (item.level === 'ERROR') el.classList.add('text-red-400');
+    else if (item.level === 'WARN') el.classList.add('text-yellow-300');
+    else if (item.level === 'SYSTEM') el.classList.add('text-blue-300');
+    consoleEl.appendChild(el);
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+    document.getElementById('lastLog').textContent = item.msg.slice(0,120);
+  }
+
+  socket.on('connect', () => {
+    addLog({ level: 'SYSTEM', msg: '[SYSTEM] Connected to dashboard socket' });
+  });
+  socket.on('logs', (logs) => {
+    logs.forEach(addLog);
+  });
+  socket.on('metrics', (m) => {
+    document.getElementById('status').textContent = m.status || 'unknown';
+    document.getElementById('uptime').textContent = m.uptime || 0;
+    document.getElementById('memory').textContent = m.memoryUsageMB || 0;
+    document.getElementById('activeUsers').textContent = m.activeUsers || 0;
+    document.getElementById('codeUpdates').textContent = m.codeUpdates || 0;
+    document.getElementById('lagSpikes').textContent = m.lagSpikes || 0;
+  });
+  socket.on('disconnect', () => addLog({ level: 'SYSTEM', msg: '[SYSTEM] Disconnected' }));
+</script>
+</body>
+</html>
