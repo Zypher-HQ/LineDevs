@@ -1,0 +1,21 @@
+{
+  "name": "linedevs-console",
+  "version": "1.0.0",
+  "description": "LineDevs Console Logs Bot and Dashboard for Roblox Verification and AI system",
+  "main": "index.cjs",
+  "scripts": {
+    "start": "node index.cjs",
+    "keep-alive": "node keep_alive.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.2",
+    "express": "^4.19.2",
+    "body-parser": "^1.20.2",
+    "node-fetch": "^3.3.2",
+    "path": "^0.12.7",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
