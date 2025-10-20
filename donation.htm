@@ -1,62 +1,40 @@
+
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LineDevs Console Logs - Donations</title>
-  <link rel="icon" href="/favicon.ico" type="image/png">
-  <script src="https://cdn.tailwindcss.com"></script>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Donate - LineDevs</title>
+<link rel="icon" href="/server_icon.png" type="image/png">
+<style>
+  body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial;background:#f7f9fc;color:#111827;padding:24px;text-align:center}
+  .card{max-width:520px;margin:24px auto;background:white;border-radius:12px;padding:24px;box-shadow:0 10px 30px rgba(2,6,23,0.08)}
+  .btn{background:#5865F2;color:white;padding:10px 14px;border-radius:8px;text-decoration:none;display:inline-block}
+  footer{color:#6b7280;margin-top:18px}
+</style>
 </head>
-<body class="bg-slate-900 text-slate-100 flex items-center justify-center min-h-screen">
-  <main class="max-w-md w-full p-6 bg-slate-800 rounded shadow">
-    <div class="flex items-center justify-between mb-4">
-      <h1 class="text-lg font-semibold">Support LineDevs</h1>
-      <img src="/favicon.ico" alt="logo" class="w-8 h-8 rounded" />
-    </div>
-    <div id="content" class="text-center">
-      <p class="mb-4 text-slate-300">Checking your region...</p>
-      <div id="ph-area" class="hidden">
-        <p class="mb-2">🇵🇭 Donate via <strong>GCash</strong></p>
-        <p class="text-xl font-mono mb-2">+63 936 170 3679</p>
-        <button id="copyBtn" class="px-4 py-2 bg-blue-600 rounded mb-3">Copy Number</button>
-        <p class="mb-4 text-slate-300">Thanks for supporting LineDevs!</p>
-        <a href="/dashboard" class="inline-block px-4 py-2 bg-slate-700 rounded">Go back to Dashboard</a>
-      </div>
-      <div id="not-ph" class="hidden">
-        <p class="text-red-400 mb-3">Sorry — donations are currently only accepted from the Philippines (GCash).</p>
-        <a href="/dashboard" class="inline-block px-4 py-2 bg-slate-700 rounded">Go back to Dashboard</a>
-      </div>
-    </div>
-  </main>
-
+<body>
+<div class="card">
+  <h2>Support LineDevs</h2>
+  <p>We accept donations via GCash for users in the Philippines.</p>
+  <div id="region">Checking region...</div>
+  <div id="ph" style="display:none">
+    <p><strong>GCash Number</strong></p>
+    <p style="font-family:monospace;font-size:18px">+63 936 170 3679</p>
+    <button class="btn" id="copy">Copy</button>
+    <p style="margin-top:8px">Thank you for your support.</p>
+    <p><a href="/dashboard">Back to dashboard</a></p>
+  </div>
+  <div id="notph" style="display:none">
+    <p>Donations are currently only supported for visitors from the Philippines.</p>
+    <p><a href="/dashboard">Back to dashboard</a></p>
+  </div>
+</div>
+<footer>©2025 - Zypher - Render - Version 3.1.1</footer>
 <script>
-async function checkRegion() {
-  try {
-    const res = await fetch('https://ipapi.co/json/');
-    const js = await res.json();
-    const country = js.country_code || js.country;
-    if (country === 'PH' || country === 'PHL') {
-      document.getElementById('ph-area').classList.remove('hidden');
-      document.getElementById('content').querySelector('p').classList.add('hidden');
-      document.getElementById('copyBtn').addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText('09361703679');
-          alert('Number copied: 09361703679');
-        } catch(e) {
-          alert('Copy failed — please copy manually: 09361703679');
-        }
-      });
-    } else {
-      document.getElementById('not-ph').classList.remove('hidden');
-      document.getElementById('content').querySelector('p').classList.add('hidden');
-    }
-  } catch (e) {
-    document.getElementById('not-ph').classList.remove('hidden');
-    document.getElementById('content').querySelector('p').classList.add('hidden');
-  }
-}
-
-checkRegion();
+async function detect(){ try{
+  const r = await fetch('https://ipapi.co/json/'); const j = await r.json();
+  if (j && (j.country === 'PH' || j.country_code === 'PH')){ document.getElementById('region').style.display='none'; document.getElementById('ph').style.display='block'; document.getElementById('copy').addEventListener('click', ()=>{ navigator.clipboard.writeText('09361703679').then(()=>alert('Number copied: 09361703679')).catch(()=>alert('Copy failed.')); }); } else { document.getElementById('region').style.display='none'; document.getElementById('notph').style.display='block'; } } catch(e){ document.getElementById('region').style.display='none'; document.getElementById('notph').style.display='block'; } }
+detect();
 </script>
 </body>
 </html>

@@ -1,34 +1,21 @@
 {
-  "name": "discord-linedevs",
-  "version": "1.0.0",
-  "description": "LineDevs Console Logs — A real-time monitoring dashboard with Discord bot integration for uptime, service tracking, and donation management.",
+  "name": "linedevs-console",
+  "version": "3.1.1",
+  "description": "LineDevs Console Logs - Discord bot + dashboard for Roblox verification, AI, and moderation",
   "main": "index.cjs",
   "scripts": {
     "start": "node index.cjs",
-    "keepalive": "node keep_alive.js",
-    "dev": "nodemon index.cjs"
+    "keepalive": "node keep_alive.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
     "discord.js": "^14.15.2",
+    "express": "^4.19.2",
     "socket.io": "^4.7.5",
-    "body-parser": "^1.20.2",
-    "dotenv": "^16.4.5",
-    "path": "^0.12.7",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^2.6.7",
+    "pg": "^8.11.0",
+    "dotenv": "^16.4.5"
   },
   "engines": {
     "node": ">=18"
-  },
-  "keywords": [
-    "dashboard",
-    "discord-bot",
-    "real-time-logs",
-    "uptime-monitor",
-    "linedevs",
-    "express",
-    "socket.io"
-  ],
-  "author": "LineDevs Team",
-  "license": "MIT"
+  }
 }

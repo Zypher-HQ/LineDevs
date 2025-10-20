@@ -1,98 +1,70 @@
+
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LineDevs Console Logs</title>
-  <link rel="icon" href="/favicon.ico" type="image/png">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.min.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LineDevs Console Logs</title>
+<link rel="icon" href="/server_icon.png" type="image/png">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.min.js"></script>
+<style>
+  body { font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:#f7f9fc; color:#111827; margin:0; }
+  header { background:#5865F2; color:white; padding:16px 24px; display:flex; align-items:center; justify-content:space-between; }
+  header h1 { margin:0; font-size:18px; }
+  .container { padding:24px; display:grid; grid-template-columns:2fr 1fr; gap:16px; }
+  .card { background:white; border-radius:8px; padding:16px; box-shadow:0 6px 18px rgba(14,30,37,0.06); }
+  footer { text-align:center; padding:12px; color:#6b7280; font-size:13px; }
+  a.btn { background:#5865F2; color:white; padding:8px 12px; border-radius:6px; text-decoration:none; display:inline-block; }
+</style>
 </head>
-<body class="bg-slate-900 text-slate-100">
-  <header class="p-4 flex items-center justify-between border-b border-slate-800">
-    <div class="flex items-center gap-3">
-      <img src="/favicon.ico" alt="LineDevs" class="w-10 h-10 rounded" />
-      <h1 class="text-xl font-semibold">LineDevs Console Logs</h1>
-    </div>
-    <div class="flex items-center gap-2">
-      <a href="/donation" class="px-3 py-2 bg-blue-600 rounded">Donate</a>
-      <a href="https://discord.gg/SpHQXmXxP" target="_blank" class="px-3 py-2 bg-slate-700 rounded">Join Discord</a>
-    </div>
-  </header>
-
-  <main class="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-    <section class="md:col-span-2">
-      <div class="grid grid-cols-2 gap-4 mb-4">
-        <div class="p-4 bg-slate-800 rounded">
-          <div class="text-xs text-slate-400">Status</div>
-          <div id="status" class="text-lg">Loading...</div>
-        </div>
-        <div class="p-4 bg-slate-800 rounded">
-          <div class="text-xs text-slate-400">Uptime (s)</div>
-          <div id="uptime" class="text-lg">0</div>
-        </div>
-        <div class="p-4 bg-slate-800 rounded">
-          <div class="text-xs text-slate-400">Memory (MB)</div>
-          <div id="memory" class="text-lg">0</div>
-        </div>
-        <div class="p-4 bg-slate-800 rounded">
-          <div class="text-xs text-slate-400">Active Users</div>
-          <div id="activeUsers" class="text-lg">0</div>
-        </div>
-      </div>
-
-      <div class="bg-black p-3 rounded h-[60vh] overflow-auto font-mono text-sm" id="console">
-      </div>
-    </section>
-
-    <aside class="p-4 bg-slate-800 rounded">
-      <h2 class="text-sm text-slate-300 mb-3">Quick Metrics</h2>
-      <div class="space-y-3">
-        <div class="p-3 bg-slate-700 rounded">
-          <div class="text-xs text-slate-400">Code Updates</div>
-          <div id="codeUpdates">0</div>
-        </div>
-        <div class="p-3 bg-slate-700 rounded">
-          <div class="text-xs text-slate-400">Lag Spikes</div>
-          <div id="lagSpikes">0</div>
-        </div>
-        <div class="p-3 bg-slate-700 rounded">
-          <div class="text-xs text-slate-400">Last Log</div>
-          <div id="lastLog">—</div>
-        </div>
-      </div>
-    </aside>
-  </main>
-
+<body>
+<header>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <img src="/server_icon.png" alt="logo" style="width:40px;height:40px;border-radius:8px;">
+    <h1>LineDevs Console Logs</h1>
+  </div>
+  <div>
+    <a class="btn" href="/donation">Donate</a>
+    <a class="btn" href="https://discord.gg/SpHQXmXxP" target="_blank" style="margin-left:8px;background:#0f62fe">Join Discord</a>
+  </div>
+</header>
+<main class="container">
+  <section class="card">
+    <h2>Console Logs</h2>
+    <div id="console" style="background:#0b1220;color:#e6eef8;padding:12px;border-radius:6px;height:48vh;overflow:auto;font-family:monospace;font-size:12px;"></div>
+  </section>
+  <aside class="card">
+    <h3>Metrics</h3>
+    <p>Status: <span id="status">loading</span></p>
+    <p>Uptime (s): <span id="uptime">0</span></p>
+    <p>Memory (MB): <span id="memory">0</span></p>
+    <canvas id="memChart" height="120" style="width:100%"></canvas>
+    <canvas id="lagChart" height="120" style="width:100%;margin-top:12px"></canvas>
+  </aside>
+</main>
+<footer>©2025 - Zypher - Render - Version 3.1.1</footer>
 <script>
-  const socket = io();
-  const consoleEl = document.getElementById('console');
-  function addLog(item) {
-    const el = document.createElement('div');
-    el.textContent = item.msg;
-    if (item.level === 'ERROR') el.classList.add('text-red-400');
-    else if (item.level === 'WARN') el.classList.add('text-yellow-300');
-    else if (item.level === 'SYSTEM') el.classList.add('text-blue-300');
-    consoleEl.appendChild(el);
-    consoleEl.scrollTop = consoleEl.scrollHeight;
-    document.getElementById('lastLog').textContent = item.msg.slice(0,120);
-  }
+const socket = io();
+const consoleEl = document.getElementById('console');
+function addLog(item){ const el = document.createElement('div'); el.textContent = item.msg; if (item.level==='ERROR') el.style.color='#ff4d4f'; else if (item.level==='WARN') el.style.color='#d97706'; consoleEl.appendChild(el); consoleEl.scrollTop = consoleEl.scrollHeight; document.getElementById('status').textContent = item.level==='SYSTEM' ? 'online' : document.getElementById('status').textContent; }
+socket.on('logs', logs => logs.forEach(addLog));
+socket.on('metrics', m => {
+  document.getElementById('uptime').textContent = m.uptime || 0;
+  document.getElementById('memory').textContent = m.memoryUsageMB || 0;
+  document.getElementById('status').textContent = m.status || 'unknown';
+  // update charts
+  addPoint(m);
+});
+socket.on('connect', () => addLog({ level:'SYSTEM', msg: '[SYSTEM] ' + new Date().toISOString() + ' - Dashboard connected via socket' }));
+socket.on('disconnect', () => addLog({ level:'SYSTEM', msg: '[SYSTEM] Disconnected' }));
 
-  socket.on('connect', () => {
-    addLog({ level: 'SYSTEM', msg: '[SYSTEM] Connected to dashboard socket' });
-  });
-  socket.on('logs', (logs) => {
-    logs.forEach(addLog);
-  });
-  socket.on('metrics', (m) => {
-    document.getElementById('status').textContent = m.status || 'unknown';
-    document.getElementById('uptime').textContent = m.uptime || 0;
-    document.getElementById('memory').textContent = m.memoryUsageMB || 0;
-    document.getElementById('activeUsers').textContent = m.activeUsers || 0;
-    document.getElementById('codeUpdates').textContent = m.codeUpdates || 0;
-    document.getElementById('lagSpikes').textContent = m.lagSpikes || 0;
-  });
-  socket.on('disconnect', () => addLog({ level: 'SYSTEM', msg: '[SYSTEM] Disconnected' }));
+// charts
+const memCtx = document.getElementById('memChart').getContext('2d');
+const lagCtx = document.getElementById('lagChart').getContext('2d');
+const memChart = new Chart(memCtx, { type:'line', data:{ labels:[], datasets:[{ label:'Memory MB', data:[], fill:false }] }, options:{ responsive:true } });
+const lagChart = new Chart(lagCtx, { type:'bar', data:{ labels:[], datasets:[{ label:'Lag Spikes', data:[] }] }, options:{ responsive:true } });
+function addPoint(m){ const t = new Date().toLocaleTimeString(); memChart.data.labels.push(t); memChart.data.datasets[0].data.push(m.memoryUsageMB); if (memChart.data.labels.length>20){ memChart.data.labels.shift(); memChart.data.datasets[0].data.shift(); } memChart.update(); lagChart.data.labels.push(t); lagChart.data.datasets[0].data.push(m.lagSpikes); if (lagChart.data.labels.length>20){ lagChart.data.labels.shift(); lagChart.data.datasets[0].data.shift(); } lagChart.update(); }
 </script>
 </body>
 </html>
