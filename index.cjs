@@ -149,6 +149,7 @@ client.on('messageCreate', async (message)=>{
     if(message.content && message.content.trim().startsWith('!logout')){
       const mentioned = message.mentions.users.first();
       if(mentioned){ if(!message.member.permissions.has(PermissionsBitField.Flags.Administrator)){ await message.reply('Only administrators may logout other users.'); return; } if(pool) await pool.query('DELETE FROM users WHERE discord_id=$1',[String(mentioned.id)]).catch(()=>{}); try{ const m=await message.guild.members.fetch(mentioned.id); if(VERIFIED_ROLE_ID) await m.roles.remove(VERIFIED_ROLE_ID).catch(()=>{}); if(UNVERIFIED_ROLE_ID) await m.roles.add(UNVERIFIED_ROLE_ID).catch(()=>{});}catch(e){} await message.channel.send(`${mentioned} has been logged out and unlinked from Roblox.`); } else { if(pool) await pool.query('DELETE FROM users WHERE discord_id=$1',[String(message.author.id)]).catch(()=>{}); try{ const m=await message.guild.members.fetch(message.author.id); if(VERIFIED_ROLE_ID) await m.roles.remove(VERIFIED_ROLE_ID).catch(()=>{}); if(UNVERIFIED_ROLE_ID) await m.roles.add(UNVERIFIED_ROLE_ID).catch(()=>{});}catch(e){} await message.reply('You have been logged out and unlinked from Roblox.'); } return;
+    } // <-- FIX: This closing brace was missing, which caused the brace on the next line to be interpreted incorrectly.
   } catch(e){ await appLog('ERROR','messageCreate error', e && e.message || e); }
 });
 
@@ -294,3 +295,4 @@ server.listen(PORT, ()=> appLog('SYSTEM', `Web dashboard serving on port ${PORT}
 if(DISCORD_TOKEN){ client.login(DISCORD_TOKEN).catch(err=>appLog('ERROR','Discord login failed', err && err.message || err)); } else { appLog('WARN','DISCORD_TOKEN not set - Discord features disabled until provided in env.'); }
 
 module.exports = { app, server, io, pool };
+
