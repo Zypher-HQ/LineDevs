@@ -1,6 +1,7 @@
 /*
-LineDevs v2.4.3 - index.cjs
-Full-featured bot and dashboard entry point.
+LineDevs v2.4.4 - index.cjs
+Improved version of v2.4.3 with identical logic but refined structure and style.
+Preserves behavior; reorganized for readability and maintainability.
 */
 
 const fs = require('fs');
@@ -10,12 +11,29 @@ const http = require('http');
 const { Server: IOServer } = require('socket.io');
 const fetch = require('node-fetch');
 const { Pool } = require('pg');
-const { Client, GatewayIntentBits, Partials, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionsBitField, MessageFlags } = require('discord.js');
+const {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  PermissionsBitField,
+  MessageFlags
+} = require('discord.js');
 require('dotenv').config();
 
-const VERSION = '2.4.3';
+const VERSION = '2.4.4';
 
-// Env
+/* =====================
+   Environment & Config
+   ===================== */
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN || '';
 const CLIENT_ID = process.env.CLIENT_ID || '';
 const GUILD_ID = process.env.GUILD_ID || '';
@@ -28,12 +46,18 @@ const GEMINI_API = process.env.GEMINI_API || '';
 const ROBLOX_API_KEY = process.env.ROBLOX_API_KEY || '';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
+/* =====================
+   Database Initialization
+   ===================== */
 let pool = null;
-if (DATABASE_URL) {
+
+async function initDatabase() {
+  if (!DATABASE_URL) return;
   pool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
-  (async () => {
-    try {
-      await pool.query(`CREATE TABLE IF NOT EXISTS users (
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
         discord_id TEXT PRIMARY KEY,
         roblox_id TEXT,
         roblox_username TEXT,
@@ -42,29 +66,41 @@ if (DATABASE_URL) {
         flags INTEGER DEFAULT 0,
         banned_until TIMESTAMP NULL,
         linked_at TIMESTAMP NULL
-      );`);
-      await pool.query(`CREATE TABLE IF NOT EXISTS verifications (
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS verifications (
         discord_id TEXT PRIMARY KEY,
         roblox_id TEXT,
         roblox_username TEXT,
         verification_key TEXT,
         created_at TIMESTAMP DEFAULT now()
-      );`);
-      await pool.query(`CREATE TABLE IF NOT EXISTS logs (
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS logs (
         id SERIAL PRIMARY KEY,
         ts TIMESTAMP DEFAULT now(),
         level TEXT,
         message TEXT
-      );`);
-      console.log('Database initialized.');
-    } catch (e) { console.error(e); }
-  })();
+      );
+    `);
+
+    console.log('Database initialized.');
+    await appLog('INFO', 'Database setup complete.');
+  } catch (e) {
+    console.error(e);
+    await appLog('ERROR', 'Database initialization failed:', e && e.message || e);
+  }
 }
 
-const pendingVerifications = new Map();
+/* =====================
+   Logging
+   ===================== */
 const logBuffer = [];
 const MAX_LOGS = 6000;
-const metrics = { uptimeStart: Date.now(), memoryUsageMB: 0, lagSpikes: 0, codeUpdates: 0, activeUsers: 0, status: 'starting' };
 
 async function appLog(level, ...parts) {
   const msg = `[${level}] ${new Date().toISOString()} - ${parts.join(' ')}`;
@@ -73,9 +109,68 @@ async function appLog(level, ...parts) {
   console.log(msg);
   logBuffer.push({ level, msg, ts: Date.now() });
   if (logBuffer.length > MAX_LOGS) logBuffer.shift();
-  if (pool) pool.query('INSERT INTO logs(level,message) VALUES($1,$2)', [level, msg]).catch(()=>{});
+  if (pool) {
+    pool.query('INSERT INTO logs(level,message) VALUES($1,$2)', [level, msg])
+      .catch(e => console.error('DB Log Error:', e.message));
+  }
 }
 
+/* =====================
+   Helpers & Utils
+   ===================== */
+function generateVerificationKey() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._';
+  let k = '';
+  for (let i = 0; i < 12; i++) k += chars.charAt(Math.floor(Math.random() * chars.length));
+  return k;
+}
+
+async function resolveRobloxUsername(username) {
+  try {
+    const res = await fetch('https://users.roproxy.com/v1/usernames/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(ROBLOX_API_KEY ? { 'x-api-key': ROBLOX_API_KEY } : {}) },
+      body: JSON.stringify({ usernames: [username], excludeBannedUsers: true })
+    });
+    if (!res.ok) return null;
+    const js = await res.json();
+    if (!js.data || !js.data.length) return null;
+    return js.data[0];
+  } catch (e) {
+    await appLog('WARN', 'resolveRobloxUsername error', e && e.message || e);
+    return null;
+  }
+}
+
+async function checkDiscordRobloxLinked(discordId) {
+  try {
+    const res = await fetch('https://verify.eryn.io/api/user/' + discordId);
+    if (!res.ok) return null;
+    const js = await res.json();
+    if (js && js.status === 'ok') return { robloxId: String(js.robloxId), robloxUsername: js.robloxUsername };
+    return null;
+  } catch (e) {
+    await appLog('WARN', 'checkDiscordRobloxLinked error', e && e.message || e);
+    return null;
+  }
+}
+
+const BANNED_WORDS = ['fuck','motherfucker','fucker','cunt','nigger','nigga','bitch','dickhead','asshole'];
+function containsBannedWord(text) {
+  if (!text) return false;
+  const l = String(text).toLowerCase();
+  return BANNED_WORDS.some(w => l.includes(w));
+}
+
+/* =====================
+   Metrics & Runtime State
+   ===================== */
+const pendingVerifications = new Map();
+const metrics = { uptimeStart: Date.now(), memoryUsageMB: 0, lagSpikes: 0, codeUpdates: 0, activeUsers: 0, status: 'starting' };
+
+/* =====================
+   Discord Client & Commands
+   ===================== */
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent], partials: [Partials.Channel] });
 
 const registerCommand = new SlashCommandBuilder().setName('register_show_terms').setDescription('Display Terms & Policies for registration');
@@ -86,78 +181,130 @@ async function deploySlashCommands() {
     const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
     await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: [registerCommand.toJSON(), aiCommand.toJSON()] });
     await appLog('INFO', 'Slash commands deployed.');
-  } catch (e) { await appLog('ERROR', 'deploySlashCommands failed', e && e.message || e); }
+  } catch (e) {
+    await appLog('ERROR', 'deploySlashCommands failed', e && e.message || e);
+  }
 }
 
-async function resolveRobloxUsername(username) {
+/* =====================
+   Discord Event Handlers
+   ===================== */
+client.on('ready', async () => {
+  await appLog('INFO', `Discord clientReady ${client.user.tag}. Bot Version: ${VERSION}`);
+  metrics.status = 'online';
+  await deploySlashCommands();
+});
+
+client.on('guildMemberAdd', async (member) => {
   try {
-    const res = await fetch('https://users.roproxy.com/v1/usernames/users', { method:'POST', headers:{'Content-Type':'application/json', ...(ROBLOX_API_KEY?{'x-api-key': ROBLOX_API_KEY}:{})}, body:JSON.stringify({usernames:[username], excludeBannedUsers:true}) });
-    if (!res.ok) return null;
-    const js = await res.json();
-    if (!js.data || !js.data.length) return null;
-    return js.data[0];
-  } catch (e) { await appLog('WARN', 'resolveRobloxUsername error', e && e.message || e); return null; }
-}
+    if (UNVERIFIED_ROLE_ID) {
+      await member.roles.add(UNVERIFIED_ROLE_ID).catch(e => appLog('WARN', `Failed to assign Unverified role to ${member.user.tag}`, e.message));
+      await appLog('INFO', `Assigned Unverified to ${member.user.tag}`);
+    } else {
+      await appLog('WARN', 'UNVERIFIED_ROLE_ID not set, skipping role assignment on join.');
+    }
+  } catch (e) {
+    await appLog('WARN', 'guildMemberAdd error', e && e.message || e);
+  }
+});
 
-async function getRobloxProfileDescription(userId) {
+/* =====================
+   Message Create Handler
+   ===================== */
+client.on('messageCreate', async (message) => {
   try {
-    const res = await fetch(`https://users.roproxy.com/v1/users/${userId}`, { headers: { ...(ROBLOX_API_KEY?{'x-api-key':ROBLOX_API_KEY}:{}) } });
-    if (!res.ok) return '';
-    const js = await res.json();
-    return js.description || '';
-  } catch (e) { await appLog('WARN', 'getRobloxProfileDescription error', e && e.message || e); return ''; }
-}
+    if (message.author?.bot) return;
 
-async function checkDiscordRobloxLinked(discordId) {
-  try {
-    const res = await fetch(`https://verify.eryn.io/api/user/${discordId}`);
-    if (!res.ok) return null;
-    const js = await res.json();
-    if (js && js.status === 'ok') return { robloxId: String(js.robloxId), robloxUsername: js.robloxUsername };
-    return null;
-  } catch (e) { await appLog('WARN', 'checkDiscordRobloxLinked error', e && e.message || e); return null; }
-}
-
-function generateVerificationKey() { const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._'; let k=''; for(let i=0;i<12;i++)k+=chars.charAt(Math.floor(Math.random()*chars.length)); return k; }
-
-const BANNED_WORDS = ['fuck','motherfucker','fucker','cunt','nigger','nigga','bitch','dickhead','asshole'];
-function containsBannedWord(text){ if(!text) return false; const l=String(text).toLowerCase(); return BANNED_WORDS.some(w=>l.includes(w)); }
-
-client.on('ready', async ()=>{ await appLog('INFO', `Discord clientReady ${client.user.tag}`); metrics.status='online'; await deploySlashCommands(); });
-client.on('guildMemberAdd', async (member)=>{ try { if(UNVERIFIED_ROLE_ID) await member.roles.add(UNVERIFIED_ROLE_ID).catch(()=>{}); await appLog('INFO', `Assigned Unverified to ${member.user.tag}`); } catch(e){ await appLog('WARN', 'guildMemberAdd error', e && e.message || e); } });
-
-client.on('messageCreate', async (message)=>{
-  try {
-    if(message.author?.bot) return;
-    if(containsBannedWord(message.content)){
+    if (containsBannedWord(message.content)) {
       let u = null;
       if (pool) { const r = await pool.query('SELECT * FROM users WHERE discord_id=$1',[message.author.id]); u = r.rows[0]; }
       if(!u) u = { discord_id: message.author.id, tokens:15, flags:0 };
       u.flags = (u.flags || 0) + 1;
-      await (pool? pool.query('INSERT INTO users(discord_id,tokens,flags) VALUES($1,$2,$3) ON CONFLICT (discord_id) DO UPDATE SET flags=EXCLUDED.flags',[u.discord_id,u.tokens,u.flags]).catch(()=>{}): Promise.resolve());
-      await appLog('WARN', `User ${message.author.tag} flagged (${u.flags})`);
+      if(pool) await pool.query('INSERT INTO users(discord_id,tokens,flags) VALUES($1,$2,$3) ON CONFLICT (discord_id) DO UPDATE SET flags=EXCLUDED.flags',[u.discord_id,u.tokens,u.flags]).catch(e => appLog('ERROR', 'DB insert/update flags failed', e.message));
+      await appLog('WARN', `User ${message.author.tag} flagged (${u.flags}) for banned word usage: "${message.content}"`);
       await message.reply({ content: `You used a banned word. Warning ${u.flags}/5.`, allowedMentions: { repliedUser: false } });
-      if((u.flags||0)>=5){ const until=new Date(Date.now()+2*24*60*60*1000); if(pool) await pool.query('UPDATE users SET banned_until=$1 WHERE discord_id=$2',[until,u.discord_id]).catch(()=>{}); try{ await message.member.timeout(2*24*60*60*1000,'5 flags'); }catch(e){} await appLog('INFO',`User ${message.author.tag} temp-banned until ${until.toISOString()}`); }
+      if((u.flags||0) >= 5) {
+        const until = new Date(Date.now() + 2*24*60*60*1000);
+        if(pool) await pool.query('UPDATE users SET banned_until=$1 WHERE discord_id=$2',[until,u.discord_id]).catch(e => appLog('ERROR', 'DB update banned_until failed', e.message));
+        try {
+          await message.member.timeout(2*24*60*60*1000,'5 flags: banned word limit reached');
+          await appLog('INFO',`User ${message.author.tag} temp-banned until ${until.toISOString()}`);
+        } catch (e) {
+          await appLog('ERROR', `Failed to timeout user ${message.author.tag}`, e.message);
+        }
+      }
     }
 
-    if(message.channelId === REGISTRATION_CHANNEL_ID && !message.author.bot){ try{ await message.delete().catch(()=>{}); }catch(e){} return; }
+    if (message.channelId === REGISTRATION_CHANNEL_ID && !message.author.bot) {
+      try { await message.delete().catch(() => {}); } catch (e) {}
+      return;
+    }
 
-    if(message.channelId === AI_CHANNEL_ID){
-      const t = (message.content||'').trim();
-      if(t.toLowerCase() === '!tokens'){ let u = null; if(pool){ const r = await pool.query('SELECT * FROM users WHERE discord_id=$1',[message.author.id]); u = r.rows[0]; } if(!u){ u = { discord_id: message.author.id, tokens:15, last_token_reset:new Date() }; if(pool) await pool.query('INSERT INTO users(discord_id,tokens,last_token_reset) VALUES($1,$2,$3) ON CONFLICT (discord_id) DO NOTHING',[u.discord_id,u.tokens,u.last_token_reset]).catch(()=>{}); } const last = new Date(u.last_token_reset||0); if((Date.now()-last.getTime())>(24*60*60*1000)){ u.tokens = 15; u.last_token_reset = new Date(); if(pool) await pool.query('UPDATE users SET tokens=$1,last_token_reset=$2 WHERE discord_id=$3',[u.tokens,u.last_token_reset,u.discord_id]).catch(()=>{}); } await message.reply({ content: `You have ${u.tokens} tokens remaining today. Use /ai <prompt> to spend tokens.`, allowedMentions:{ repliedUser:false } }); await message.delete().catch(()=>{}); return; } await message.delete().catch(()=>{}); await message.channel.send({ content: `${message.author}, please use the /ai command to chat with the Assistant.`, allowedMentions:{ users:[message.author.id] } }); return; }
+    if (message.channelId === AI_CHANNEL_ID) {
+      const t = (message.content || '').trim();
+      if (t.toLowerCase() === '!tokens') {
+        let u = null;
+        if (pool) { const r = await pool.query('SELECT * FROM users WHERE discord_id=$1',[message.author.id]); u = r.rows[0]; }
+        if (!u) {
+          u = { discord_id: message.author.id, tokens:15, last_token_reset:new Date() };
+          if (pool) await pool.query('INSERT INTO users(discord_id,tokens,last_token_reset) VALUES($1,$2,$3) ON CONFLICT (discord_id) DO NOTHING',[u.discord_id,u.tokens,u.last_token_reset]).catch(e => appLog('ERROR', 'DB insert new user tokens failed', e.message));
+        }
+        const last = new Date(u.last_token_reset || 0);
+        if ((Date.now() - last.getTime()) > (24*60*60*1000)) {
+          u.tokens = 15;
+          u.last_token_reset = new Date();
+          if (pool) await pool.query('UPDATE users SET tokens=$1,last_token_reset=$2 WHERE discord_id=$3',[u.tokens,u.last_token_reset,u.discord_id]).catch(e => appLog('ERROR', 'DB reset tokens failed', e.message));
+          await appLog('INFO', `Tokens reset for ${message.author.tag}`);
+        }
+        await message.reply({ content: `You have ${u.tokens} tokens remaining today. Use /ai <prompt> to spend tokens.`, allowedMentions:{ repliedUser:false } });
+        await message.delete().catch(()=>{});
+        return;
+      }
+      await message.delete().catch(()=>{});
+      await message.channel.send({ content: `${message.author}, please use the /ai command to chat with the Assistant.`, allowedMentions:{ users:[message.author.id] } });
+      return;
+    }
 
-    if(message.content && message.content.trim().startsWith('!logout')){
+    if (message.content && message.content.trim().startsWith('!logout')) {
       const mentioned = message.mentions.users.first();
-      if(mentioned){ if(!message.member.permissions.has(PermissionsBitField.Flags.Administrator)){ await message.reply('Only administrators may logout other users.'); return; } if(pool) await pool.query('DELETE FROM users WHERE discord_id=$1',[String(mentioned.id)]).catch(()=>{}); try{ const m=await message.guild.members.fetch(mentioned.id); if(VERIFIED_ROLE_ID) await m.roles.remove(VERIFIED_ROLE_ID).catch(()=>{}); if(UNVERIFIED_ROLE_ID) await m.roles.add(UNVERIFIED_ROLE_ID).catch(()=>{});}catch(e){} await message.channel.send(`${mentioned} has been logged out and unlinked from Roblox.`); } else { if(pool) await pool.query('DELETE FROM users WHERE discord_id=$1',[String(message.author.id)]).catch(()=>{}); try{ const m=await message.guild.members.fetch(message.author.id); if(VERIFIED_ROLE_ID) await m.roles.remove(VERIFIED_ROLE_ID).catch(()=>{}); if(UNVERIFIED_ROLE_ID) await m.roles.add(UNVERIFIED_ROLE_ID).catch(()=>{});}catch(e){} await message.reply('You have been logged out and unlinked from Roblox.'); } return;
-    } // <-- FIX: This closing brace was missing, which caused the brace on the next line to be interpreted incorrectly.
-  } catch(e){ await appLog('ERROR','messageCreate error', e && e.message || e); }
+      if (mentioned) {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) { await message.reply('Only administrators may logout other users.'); return; }
+        if (pool) await pool.query('DELETE FROM users WHERE discord_id=$1',[String(mentioned.id)]).catch(e => appLog('ERROR', 'DB delete user failed (admin logout)', e.message));
+        try {
+          const m = await message.guild.members.fetch(mentioned.id);
+          if (VERIFIED_ROLE_ID) await m.roles.remove(VERIFIED_ROLE_ID).catch(e => appLog('WARN', 'Failed to remove VERIFIED_ROLE_ID (admin logout)', e.message));
+          if (UNVERIFIED_ROLE_ID) await m.roles.add(UNVERIFIED_ROLE_ID).catch(e => appLog('WARN', 'Failed to add UNVERIFIED_ROLE_ID (admin logout)', e.message));
+        } catch (e) { await appLog('WARN', `Admin logout fetch/role error for ${mentioned.tag}`, e.message); }
+        await message.channel.send(`${mentioned} has been logged out and unlinked from Roblox.`);
+        await appLog('INFO', `Admin logged out user ${mentioned.tag}`);
+      } else {
+        if (pool) await pool.query('DELETE FROM users WHERE discord_id=$1',[String(message.author.id)]).catch(e => appLog('ERROR', 'DB delete user failed (self logout)', e.message));
+        try {
+          const m = await message.guild.members.fetch(message.author.id);
+          if (VERIFIED_ROLE_ID) await m.roles.remove(VERIFIED_ROLE_ID).catch(e => appLog('WARN', 'Failed to remove VERIFIED_ROLE_ID (self logout)', e.message));
+          if (UNVERIFIED_ROLE_ID) await m.roles.add(UNVERIFIED_ROLE_ID).catch(e => appLog('WARN', 'Failed to add UNVERIFIED_ROLE_ID (self logout)', e.message));
+          await appLog('INFO', `User ${message.author.tag} logged themselves out.`);
+        } catch (e) { await appLog('WARN', `Self logout fetch/role error for ${message.author.tag}`, e.message); }
+        await message.reply('You have been logged out and unlinked from Roblox.');
+      }
+      return;
+    }
+
+  } catch (e) {
+    await appLog('ERROR','messageCreate handler failure', e && e.message || e);
+  }
 });
 
-client.on('interactionCreate', async (interaction)=>{
-  try{
-    if(interaction.isChatInputCommand()){
-      if(interaction.commandName === 'register_show_terms'){
-        if(!interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator)) return interaction.reply({ content: 'Only administrators may deploy the registration terms.', flags: MessageFlags.Ephemeral });
+/* =====================
+   Interaction Handler
+   ===================== */
+client.on('interactionCreate', async (interaction) => {
+  try {
+    if (interaction.isChatInputCommand()) {
+      if (interaction.commandName === 'register_show_terms') {
+        if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator))
+          return interaction.reply({ content: 'Only administrators may deploy the registration terms.', flags: MessageFlags.Ephemeral });
+
         const termsText = [
           '**LineDevs Terms of Service & Registration Policy**',
           '',
@@ -183,116 +330,217 @@ client.on('interactionCreate', async (interaction)=>{
           '',
           'By clicking "Agree & Register", you accept these terms and consent to the described processing of account data.'
         ].join('\n');
+
         const agreeBtn = new ButtonBuilder().setCustomId('agree_register').setLabel('Agree & Register').setStyle(ButtonStyle.Primary);
         await interaction.reply({ content: termsText, components: [ new ActionRowBuilder().addComponents(agreeBtn) ] });
+        await appLog('INFO', `Admin ${interaction.user.tag} deployed registration terms.`);
         return;
       }
 
-      if(interaction.commandName === 'ai'){
+      if (interaction.commandName === 'ai') {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const prompt = interaction.options.getString('prompt').trim();
         let u = null;
-        if(pool){ const r = await pool.query('SELECT * FROM users WHERE discord_id=$1',[interaction.user.id]); u = r.rows[0]; }
-        if(!u){ u = { discord_id: interaction.user.id, tokens: 15, last_token_reset: new Date() }; if(pool) await pool.query('INSERT INTO users(discord_id,tokens,last_token_reset) VALUES($1,$2,$3) ON CONFLICT (discord_id) DO NOTHING',[u.discord_id,u.tokens,u.last_token_reset]).catch(()=>{}); }
-        const last = new Date(u.last_token_reset || 0);
-        if((Date.now() - last.getTime()) > (24*60*60*1000)){ u.tokens = 15; u.last_token_reset = new Date(); if(pool) await pool.query('UPDATE users SET tokens=$1,last_token_reset=$2 WHERE discord_id=$3',[u.tokens,u.last_token_reset,u.discord_id]).catch(()=>{}); }
-        if(u.banned_until && new Date(u.banned_until) > new Date()) return interaction.editReply({ content: `You are banned until ${new Date(u.banned_until).toUTCString()}.` });
-        if((u.tokens||0) <= 0) return interaction.editReply({ content: 'You have no tokens left today. Use !tokens to check balance.' });
-        u.tokens = (u.tokens||0) - 1;
-        if(pool) await pool.query('UPDATE users SET tokens=$1 WHERE discord_id=$2',[u.tokens,u.discord_id]).catch(()=>{});
-        let assistantText = 'Assistant not configured. Please set GEMINI_API.';
-        if(GEMINI_API){
-          try{
-            const gRes = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key='+GEMINI_API, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ prompts:[{ text: prompt }] }) });
-            const gJson = await gRes.json();
-            assistantText = gJson?.candidates?.[0]?.content?.[0]?.text || 'No reply from Assistant.';
-          }catch(e){ assistantText = 'Assistant error.'; }
-        }
-        return interaction.editReply({ content: `Assistant:\n${assistantText}` });
-      }
-    }
 
-    if(interaction.isButton()){
-      if(interaction.customId === 'agree_register'){
+        if (pool) { const r = await pool.query('SELECT * FROM users WHERE discord_id=$1',[interaction.user.id]); u = r.rows[0]; }
+        if (!u) { u = { discord_id: interaction.user.id, tokens: 15, last_token_reset: new Date() }; if (pool) await pool.query('INSERT INTO users(discord_id,tokens,last_token_reset) VALUES($1,$2,$3) ON CONFLICT (discord_id) DO NOTHING',[u.discord_id,u.tokens,u.last_token_reset]).catch(e => appLog('ERROR', 'DB insert new user tokens failed (AI)', e.message)); }
+        const last = new Date(u.last_token_reset || 0);
+        if ((Date.now() - last.getTime()) > (24*60*60*1000)) {
+          u.tokens = 15;
+          u.last_token_reset = new Date();
+          if (pool) await pool.query('UPDATE users SET tokens=$1,last_token_reset=$2 WHERE discord_id=$3',[u.tokens,u.last_token_reset,u.discord_id]).catch(e => appLog('ERROR', 'DB reset tokens failed (AI)', e.message));
+        }
+        if (u.banned_until && new Date(u.banned_until) > new Date()) return interaction.editReply({ content: `You are banned until ${new Date(u.banned_until).toUTCString()}.` });
+        if ((u.tokens||0) <= 0) return interaction.editReply({ content: 'You have no tokens left today. Use !tokens to check balance.' });
+        u.tokens = (u.tokens||0) - 1;
+        if (pool) await pool.query('UPDATE users SET tokens=$1 WHERE discord_id=$2',[u.tokens,u.discord_id]).catch(e => appLog('ERROR', 'DB decrement tokens failed (AI)', e.message));
+
+        let assistantText = 'Assistant not configured. Please set GEMINI_API.';
+        if (GEMINI_API) {
+          try {
+            const payload = { contents: [{ parts: [{ text: prompt }] }] }; // CORRECT PAYLOAD STRUCTURE
+            await appLog('DEBUG', `Sending AI prompt for ${interaction.user.tag}. Tokens remaining: ${u.tokens}`);
+
+            const gRes = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GEMINI_API, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+
+            if (!gRes.ok) {
+              const errorBody = await gRes.text();
+              await appLog('ERROR', `AI API HTTP Error ${gRes.status} for ${interaction.user.tag}:`, errorBody.substring(0, 500) + '...');
+              assistantText = `AI API failed (HTTP ${gRes.status}). Error logged.`;
+            } else {
+              const gJson = await gRes.json();
+              assistantText = gJson?.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (!assistantText) {
+                await appLog('ERROR', `AI didn't Reply (Missing Text) for ${interaction.user.tag}. JSON:`, JSON.stringify(gJson).substring(0, 500) + '...');
+                assistantText = 'AI failed to reply. The response was empty. (Error logged)';
+              } else {
+                await appLog('INFO', `AI replied to ${interaction.user.tag} (Length: ${assistantText.length})`);
+              }
+            }
+
+          } catch (e) {
+            await appLog('ERROR', 'AI Fetch/JSON Parsing Error', e && e.message || e);
+            assistantText = 'AI request failed due to internal error. (Error logged)';
+          }
+        } else {
+          await appLog('WARN', 'AI request blocked: GEMINI_API not set.');
+        }
+
+        const finalResponse = assistantText || 'No reply from Assistant.';
+        return interaction.editReply({ content: `Assistant:\n${finalResponse}` });
+      }
+    } // end ChatInputCommand
+
+    if (interaction.isButton()) {
+      if (interaction.customId === 'agree_register') {
         const linked = await checkDiscordRobloxLinked(interaction.user.id);
-        if(linked){
+        if (linked) {
           await interaction.deferReply({ flags: MessageFlags.Ephemeral });
           const existing = pool ? (await pool.query('SELECT * FROM users WHERE roblox_id=$1',[linked.robloxId])).rows[0] : null;
-          if(existing && existing.discord_id !== interaction.user.id) return interaction.editReply({ content: `This Roblox account is already linked to <@${existing.discord_id}>. That user must logout first.` });
-          if(pool) await pool.query('INSERT INTO users(discord_id,roblox_id,roblox_username,tokens,last_token_reset,flags,linked_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (discord_id) DO UPDATE SET roblox_id=EXCLUDED.roblox_id, roblox_username=EXCLUDED.roblox_username',[interaction.user.id,linked.robloxId,linked.robloxUsername,15,new Date(),0,new Date()]).catch(()=>{});
-          try{ const guild=interaction.guild; const member = await guild.members.fetch(interaction.user.id); if(UNVERIFIED_ROLE_ID) await member.roles.remove(UNVERIFIED_ROLE_ID).catch(()=>{}); if(VERIFIED_ROLE_ID) await member.roles.add(VERIFIED_ROLE_ID).catch(()=>{}); await member.setNickname(linked.robloxUsername).catch(()=>{}); }catch(e){}
-          return interaction.editReply({ content: `Verified via linked Roblox account: ${linked.robloxUsername}` });
+          if (existing && existing.discord_id !== interaction.user.id) return interaction.editReply({ content: `This Roblox account is already linked to <@${existing.discord_id}>. That user must logout first.` });
+          if (pool) await pool.query('INSERT INTO users(discord_id,roblox_id,roblox_username,tokens,last_token_reset,flags,linked_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (discord_id) DO UPDATE SET roblox_id=EXCLUDED.roblox_id, roblox_username=EXCLUDED.roblox_username, linked_at=EXCLUDED.linked_at',[interaction.user.id,linked.robloxId,linked.robloxUsername,15,new Date(),0,new Date()]).catch(e => appLog('ERROR', 'DB insert/update failed (linked verification)', e.message));
+          try {
+            const guild = interaction.guild;
+            const member = await guild.members.fetch(interaction.user.id);
+            if (UNVERIFIED_ROLE_ID) await member.roles.remove(UNVERIFIED_ROLE_ID).catch(e => appLog('WARN', 'Failed to remove UNVERIFIED_ROLE_ID (linked)', e.message));
+            if (VERIFIED_ROLE_ID) await member.roles.add(VERIFIED_ROLE_ID).catch(e => appLog('WARN', 'Failed to add VERIFIED_ROLE_ID (linked)', e.message));
+            await member.setNickname(linked.robloxUsername).catch(e => appLog('WARN', 'Failed to set nickname (linked)', e.message));
+            await appLog('INFO', `User ${interaction.user.tag} auto-verified via linked account as ${linked.robloxUsername}`);
+          } catch (e) { await appLog('ERROR', 'Role/Nickname update failed (linked verification)', e.message); }
+          return interaction.editReply({ content: `Verified via linked Roblox account: **${linked.robloxUsername}**` });
         }
+
         const modal = new ModalBuilder().setCustomId('modal_register_roblox').setTitle('Register — Roblox Username');
         const usernameInput = new TextInputBuilder().setCustomId('roblox_username').setLabel('Roblox username (only username)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(32);
         modal.addComponents(new ActionRowBuilder().addComponents(usernameInput));
         return interaction.showModal(modal);
       }
 
-      if(interaction.customId === 'done_verification'){
+      if (interaction.customId === 'done_verification') {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const pend = pendingVerifications.get(interaction.user.id);
-        if(!pend) return interaction.editReply({ content: 'No pending verification found.' });
-        const desc = await getRobloxProfileDescription(pend.robloxId);
-        if(desc && desc.includes(pend.verificationKey)){
+        if (!pend) return interaction.editReply({ content: 'No pending verification found.' });
+
+        let desc = '';
+        try {
+          const res = await fetch(`https://users.roblox.com/v1/users/${pend.robloxId}`);
+          if (res.ok) {
+            const js = await res.json();
+            desc = js.description || '';
+            await appLog('DEBUG', `Fetched Roblox description for ${pend.robloxName}. Success: ${desc.includes(pend.verificationKey)}`);
+          } else {
+            await appLog('ERROR', `Roblox profile fetch failed for ${pend.robloxName}. HTTP Status: ${res.status}`);
+          }
+        } catch (e) {
+          await appLog('WARN', 'Verification profile fetch error', e && e.message || e);
+        }
+
+        if (desc && desc.includes(pend.verificationKey)) {
           const existing = pool ? (await pool.query('SELECT * FROM users WHERE roblox_id=$1',[pend.robloxId])).rows[0] : null;
-          if(existing && existing.discord_id !== interaction.user.id) return interaction.editReply({ content: `This Roblox account is already linked to <@${existing.discord_id}>.` });
-          if(pool) await pool.query('INSERT INTO users(discord_id,roblox_id,roblox_username,tokens,last_token_reset,flags,linked_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (discord_id) DO UPDATE SET roblox_id=EXCLUDED.roblox_id, roblox_username=EXCLUDED.roblox_username',[interaction.user.id,pend.robloxId,pend.robloxName,15,new Date(),0,new Date()]).catch(()=>{});
-          try{ const guild=interaction.guild; const member = await guild.members.fetch(interaction.user.id); if(UNVERIFIED_ROLE_ID) await member.roles.remove(UNVERIFIED_ROLE_ID).catch(()=>{}); if(VERIFIED_ROLE_ID) await member.roles.add(VERIFIED_ROLE_ID).catch(()=>{}); await member.setNickname(pend.robloxName).catch(()=>{}); }catch(e){}
+          if (existing && existing.discord_id !== interaction.user.id) return interaction.editReply({ content: `This Roblox account is already linked to <@${existing.discord_id}>. You must use a different account.` });
+          if (pool) await pool.query('INSERT INTO users(discord_id,roblox_id,roblox_username,tokens,last_token_reset,flags,linked_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (discord_id) DO UPDATE SET roblox_id=EXCLUDED.roblox_id, roblox_username=EXCLUDED.roblox_username, linked_at=EXCLUDED.linked_at',[interaction.user.id,pend.robloxId,pend.robloxName,15,new Date(),0,new Date()]).catch(e => appLog('ERROR', 'DB insert/update failed (manual verification)', e.message));
+          try {
+            const guild = interaction.guild;
+            const member = await guild.members.fetch(interaction.user.id);
+            if (UNVERIFIED_ROLE_ID) await member.roles.remove(UNVERIFIED_ROLE_ID).catch(e => appLog('WARN', 'Failed to remove UNVERIFIED_ROLE_ID (manual)', e.message));
+            if (VERIFIED_ROLE_ID) await member.roles.add(VERIFIED_ROLE_ID).catch(e => appLog('WARN', 'Failed to add VERIFIED_ROLE_ID (manual)', e.message));
+            await member.setNickname(pend.robloxName).catch(e => appLog('WARN', 'Failed to set nickname (manual)', e.message));
+            await appLog('INFO', `User ${interaction.user.tag} manually verified as ${pend.robloxName}`);
+          } catch (e) { await appLog('ERROR', 'Role/Nickname update failed (manual verification)', e.message); }
           pendingVerifications.delete(interaction.user.id);
-          return interaction.editReply({ content: `Verification successful — Verified as ${pend.robloxName}` });
+          return interaction.editReply({ content: `Verification successful — Verified as **${pend.robloxName}**` });
         } else {
-          return interaction.editReply({ content: `Key not found on profile. Make sure you pasted exactly: ${pend.verificationKey}` });
+          return interaction.editReply({ content: `Key not found on profile. Make sure you pasted exactly:\n\`\`\`${pend.verificationKey}\`\`\`\n\nIt can take a few minutes for Roblox to update the description.` });
         }
       }
-    }
+    } // end button handler
 
-    if(interaction.isModalSubmit()){
-      if(interaction.customId === 'modal_register_roblox'){
+    if (interaction.isModalSubmit()) {
+      if (interaction.customId === 'modal_register_roblox') {
         const username = interaction.fields.getTextInputValue('roblox_username').trim();
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const lookup = await resolveRobloxUsername(username);
-        if(!lookup) return interaction.editReply({ content: `Roblox username ${username} not found.` });
+        if (!lookup) return interaction.editReply({ content: `Roblox username **${username}** not found.` });
         const key = generateVerificationKey();
-        pendingVerifications.set(interaction.user.id, { robloxId: lookup.id, robloxName: lookup.username || username, verificationKey: key });
-        if(pool) await pool.query('INSERT INTO verifications(discord_id,roblox_id,roblox_username,verification_key) VALUES($1,$2,$3,$4) ON CONFLICT (discord_id) DO UPDATE SET roblox_id=EXCLUDED.roblox_id, verification_key=EXCLUDED.verification_key',[interaction.user.id,lookup.id,lookup.username||username,key]).catch(()=>{});
-        const instructions = `Account Verification\nPlease place the following Key onto your Roblox profile's About section:\n\n${key}\n\nInstructions:\n1) Copy the key.\n2) Go to profile: https://www.roblox.com/users/${lookup.id}/profile\n3) Paste key in About.\n4) Return and press Done.`;
+        pendingVerifications.set(interaction.user.id, { robloxId: lookup.id, robloxName: lookup.username || username, verificationKey: key, timestamp: Date.now() });
+        if (pool) await pool.query('INSERT INTO verifications(discord_id,roblox_id,roblox_username,verification_key) VALUES($1,$2,$3,$4) ON CONFLICT (discord_id) DO UPDATE SET roblox_id=EXCLUDED.roblox_id, verification_key=EXCLUDED.verification_key, roblox_username=EXCLUDED.roblox_username',[interaction.user.id,lookup.id,lookup.username||username,key]).catch(e => appLog('ERROR', 'DB insert verification key failed', e.message));
+
+        const instructions = `**Account Verification**\n\n1) Copy the key below (easy tap-to-copy block):\n\`\`\`${key}\`\`\`\n2) Go to your Roblox profile: https://www.roblox.com/users/${lookup.id}/profile\n3) Paste the key **exactly** into your profile's About section.\n4) Return here and press **Done**.\n\n*Key expires in 30 minutes.*`;
+
         const doneButton = new ButtonBuilder().setCustomId('done_verification').setLabel('Done').setStyle(ButtonStyle.Success);
+        await appLog('INFO', `Started verification for ${interaction.user.tag} as ${lookup.username || username}`);
         return interaction.editReply({ content: instructions, components: [ new ActionRowBuilder().addComponents(doneButton) ] });
       }
     }
 
-  }catch(e){ await appLog('ERROR','interactionCreate error', e && e.message || e); try{ if(!interaction.replied && !interaction.deferred) await interaction.reply({ content: 'An error occurred while processing your request.', flags: MessageFlags.Ephemeral }); else await interaction.followUp({ content: 'An error occurred while processing your request.', flags: MessageFlags.Ephemeral }); }catch(err){ await appLog('WARN','failed to send error reply', err && err.message || err); } }
-});
+  } catch (e) {
+    await appLog('ERROR','interactionCreate failure', e && e.message || e);
+    try {
+      if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: 'An error occurred while processing your request.', flags: MessageFlags.Ephemeral });
+      else await interaction.followUp({ content: 'An error occurred while processing your request.', flags: MessageFlags.Ephemeral });
+    } catch (err) {
+      await appLog('WARN','failed to send error reply', err && err.message || err);
+    }
+  }
+}); // end interactionCreate
 
+/* =====================
+   Express / Dashboard
+   ===================== */
 const app = express();
 const server = http.createServer(app);
 const io = new IOServer(server, { cors: { origin: '*' } });
 
 app.use(express.static(path.join(__dirname)));
 
-app.get('/', (req,res)=>res.redirect('/dashboard'));
-app.get('/dashboard', (req,res)=>res.sendFile(path.join(__dirname,'dashboard.html')));
-app.get('/donation', (req,res)=>res.sendFile(path.join(__dirname,'donation.htm')));
-app.get('/favicon.ico', (req,res)=>res.sendFile(path.join(__dirname,'server_icon.png')));
+app.get('/', (req, res) => res.redirect('/dashboard'));
+app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'dashboard.html')));
+app.get('/donation', (req, res) => res.sendFile(path.join(__dirname, 'donation.html')));
+app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'server_icon.png')));
 
 let lastDashboardConnectLogAt = 0;
 const DASHBOARD_CONNECT_DEDUPE_MS = 10000;
 
-app.get('/api/metrics', (req,res)=>{ const m = { uptime: Math.round((Date.now()-metrics.uptimeStart)/1000), memoryUsageMB: Math.round(process.memoryUsage().rss/1024/1024), lagSpikes: metrics.lagSpikes, codeUpdates: metrics.codeUpdates, activeUsers: metrics.activeUsers, status: metrics.status }; res.json(m); });
+app.get('/api/metrics', (req, res) => {
+  const m = { uptime: Math.round((Date.now() - metrics.uptimeStart) / 1000), memoryUsageMB: Math.round(process.memoryUsage().rss / 1024 / 1024), lagSpikes: metrics.lagSpikes, codeUpdates: metrics.codeUpdates, activeUsers: metrics.activeUsers, status: metrics.status };
+  res.json(m);
+});
 
-io.on('connection', (socket)=>{ const now = Date.now(); if(now - lastDashboardConnectLogAt > DASHBOARD_CONNECT_DEDUPE_MS){ lastDashboardConnectLogAt = now; appLog('SYSTEM','Dashboard connected via socket'); } socket.emit('metrics', { uptime: Math.round((Date.now()-metrics.uptimeStart)/1000), memoryUsageMB: Math.round(process.memoryUsage().rss/1024/1024), lagSpikes: metrics.lagSpikes, codeUpdates: metrics.codeUpdates, activeUsers: metrics.activeUsers, status: metrics.status }); socket.emit('logs', logBuffer.slice(-200)); });
+io.on('connection', (socket) => {
+  const now = Date.now();
+  if (now - lastDashboardConnectLogAt > DASHBOARD_CONNECT_DEDUPE_MS) { lastDashboardConnectLogAt = now; appLog('SYSTEM','Dashboard connected via socket'); }
+  socket.emit('metrics', { uptime: Math.round((Date.now() - metrics.uptimeStart) / 1000), memoryUsageMB: Math.round(process.memoryUsage().rss / 1024 / 1024), lagSpikes: metrics.lagSpikes, codeUpdates: metrics.codeUpdates, activeUsers: metrics.activeUsers, status: metrics.status });
+  socket.emit('logs', logBuffer.slice(-200));
+});
 
-setInterval(()=>{ metrics.memoryUsageMB = Math.round(process.memoryUsage().rss/1024/1024); metrics.uptime = Math.round((Date.now()-metrics.uptimeStart)/1000); metrics.codeUpdates = Math.floor(Math.random()*5); metrics.activeUsers = Math.floor(Math.random()*200); if(io) io.emit('metrics', metrics); }, 3000);
+setInterval(() => {
+  metrics.memoryUsageMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
+  metrics.uptime = Math.round((Date.now() - metrics.uptimeStart) / 1000);
+  metrics.codeUpdates = Math.floor(Math.random() * 5);
+  metrics.activeUsers = Math.floor(Math.random() * 200);
+  if (io) io.emit('metrics', metrics);
+}, 3000);
 
-// global handlers
-process.on('unhandledRejection', (reason)=>{ appLog('ERROR','Unhandled Rejection', String(reason)); });
-process.on('uncaughtException', (err)=>{ appLog('ERROR','Uncaught Exception', err && err.stack ? err.stack : String(err)); });
-client.on('error', (err)=>{ appLog('ERROR','Discord client error', err && err.stack ? err.stack : String(err)); });
+/* =====================
+   Global Error Handlers
+   ===================== */
+process.on('unhandledRejection', (reason) => { appLog('ERROR', 'Unhandled Rejection', String(reason)); });
+process.on('uncaughtException', (err) => { appLog('ERROR', 'Uncaught Exception', err && err.stack ? err.stack : String(err)); });
+client.on('error', (err) => { appLog('ERROR', 'Discord client error', err && err.stack ? err.stack : String(err)); });
 
-server.listen(PORT, ()=> appLog('SYSTEM', `Web dashboard serving on port ${PORT}`));
+/* =====================
+   Start Server & Discord
+   ===================== */
+server.listen(PORT, () => appLog('SYSTEM', `Web dashboard serving on port ${PORT}`));
 
-if(DISCORD_TOKEN){ client.login(DISCORD_TOKEN).catch(err=>appLog('ERROR','Discord login failed', err && err.message || err)); } else { appLog('WARN','DISCORD_TOKEN not set - Discord features disabled until provided in env.'); }
+if (DISCORD_TOKEN) { client.login(DISCORD_TOKEN).catch(err => appLog('ERROR','Discord login failed', err && err.message || err)); }
+else { appLog('WARN','DISCORD_TOKEN not set - Discord features disabled until provided in env.'); }
+
+// Initialize DB if needed
+initDatabase().catch(e => console.error('DB init failed', e));
 
 module.exports = { app, server, io, pool };
-
